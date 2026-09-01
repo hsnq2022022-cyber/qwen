@@ -528,6 +528,36 @@ document.addEventListener('click',function(e){
 },true);
 })();
 </script>
+   <!-- ═══ إصلاح نافذة «إضافة مصدر» (المشكلة 7) ═══ -->
+<script>
+(function(){
+
+/* [1] نسخة محصّنة من agentOptions: لا تنهار حتى لو غابت مصفوفة الوكلاء */
+window.agentOptions=function(sel){
+  var s=ws();var ag=(s&&s.agents)||[];
+  return '<option value="">مشترك — كل الوكلاء (يُنسخ لكل وكيل)</option>'+ag.map(function(a){
+    return '<option value="'+a.id+'"'+(sel===a.id?' selected':'')+'>'+esc(a.name)+'</option>';
+  }).join('');
+};
+
+/* [2] ضمان وجود كل المصفوفات قبل عرض أي صفحة أو نافذة */
+function fixWs(){
+  var s=ws();if(!s)return;
+  ['agents','widgets','kb','contacts','convos','invoices'].forEach(function(k){
+    if(!Array.isArray(s[k]))s[k]=[];
+  });
+  if(!s.settings)s.settings={};
+  if(!s.usage)s.usage={ai:0};
+}
+
+/* [3] تطبيق الضمان تلقائيًا عند كل تنقّل وكل حفظ */
+var _route=window.route;
+window.route=function(){fixWs();return _route.apply(this,arguments);};
+var _save=window.save;
+window.save=function(){fixWs();return _save.apply(this,arguments);};
+
+})();
+</script>  
 </body>
 </html>
 
