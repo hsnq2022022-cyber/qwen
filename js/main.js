@@ -82,9 +82,15 @@ const AV_LOCAL=[
 const AVT=AV_LOCAL;
 const NO_INFO_MSG='عذراً، هذه المعلومة غير متوفرة لدي حالياً، هل أستطيع تحويلك لأحد موظفي الدعم؟';
 const PLANS={
-free:{name:'البداية',price:0,agents:6,msgs:500,feat:['حتى 6 Agents','500 رسالة AI شهريًا','Knowledge Base أساسية','شعار إدارة سوشيال في الويدجت']},
-growth:{name:'النمو',price:99,agents:10,msgs:5000,feat:['حتى 10 Agents','5,000 رسالة AI شهريًا','Knowledge Base متقدمة + RAG','إزالة شعار إدارة سوشيال','تحويل لموظف (Handoff)','تحليلات متقدمة']},
-pro:{name:'الاحترافي',price:299,agents:999,msgs:50000,feat:['Agents غير محدودين','50,000 رسالة AI شهريًا','API كامل + Webhooks','أولوية دعم + SLA','نماذج AI متعددة','تصدير البيانات']}};
+free:{name:'البداية',price:0,agents:6,msgs:500,feat:['حتى 6 Agents','رصيد ردود يُشترى مرة واحدة','Knowledge Base أساسية','شعار إدارة سوشيال في الويدجت']},
+growth:{name:'النمو',price:0,agents:10,msgs:5000,feat:['حتى 10 Agents','خصم على حزم الردود','Knowledge Base متقدمة + RAG','إزالة شعار إدارة سوشيال','تحويل لموظف (Handoff)','تحليلات متقدمة']},
+pro:{name:'الاحترافي',price:0,agents:999,msgs:50000,feat:['Agents غير محدودين','أفضل سعر للرد','API كامل + Webhooks','أولوية دعم + SLA','نماذج AI متعددة','تصدير البيانات']}};
+/* حزم الردود — بدون اشتراك شهري */
+const PKGS=[
+{id:'starter',name:'حزمة البداية',credits:1000,price:30,popular:false},
+{id:'growth',name:'حزمة النمو',credits:5000,price:120,popular:true},
+{id:'pro',name:'حزمة الاحتراف',credits:20000,price:400,popular:false},
+{id:'enterprise',name:'حزمة المؤسسات',credits:100000,price:1500,popular:false}];
 const AI_MODELS=['gemini-2.5-flash-lite','gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-pro'];
 const CLASSES=['استفسار عام','مهتم','عميل محتمل','مشتري','عميل حالي','يحتاج متابعة','غير مهتم'];
 const AUTO_TAGS=new Set(['سأل عن السعر','سأل عن التوصيل','سأل عن الدفع','نية شراء','طلب موظف']);
@@ -137,7 +143,7 @@ kb.forEach(chunkify);
 return {agents:[a1,a2],widgets:[w1,w2],kb:kb,contacts:[],convos:[],
 settings:{name:'مساحة عملي',type:'متجر إلكتروني',lang:'العربية',tz:'Asia/Riyadh',team:[],
 onboarded:false,onboardingStep:1,obStep:1,obBuilt:false,onboardingAgentId:null,onboardingWidgetId:null,obAgentId:null,obWidgetId:null,goals:[],channels:['widget']},
-plan:'free',usage:{ai:0},invoices:[]};
+plan:'free',usage:{ai:0},invoices:[],credits_balance:20,credits_used:0,credit_history:[]};
 }
 /* ================= Remote sync ================= */
 let pushTimer=null;
@@ -155,11 +161,12 @@ const T={agents:s.agents,widgets:s.widgets,knowledge_docs:s.kb,contacts:s.contac
 for(const t in T){
 const r1=await c.from(t).delete().eq('workspace_id',wid);if(r1.error)throw r1.error;
 if(T[t]&&T[t].length){const r2=await c.from(t).insert(T[t].map(function(x){return {id:x.id,workspace_id:wid,data:x}}));if(r2.error)throw r2.error;}}
-const r3=await c.from('workspaces').update({name:s.settings.name,type:s.settings.type,lang:s.settings.lang,tz:s.settings.tz,team:s.settings.team,plan:s.plan,usage_ai:s.usage.ai}).eq('id',wid);
+const r3=await c.from('workspaces').update({name:s.settings.name,type:s.settings.type,lang:s.settings.lang,tz:s.settings.tz,team:s.settings.team,plan:s.plan,usage_ai:s.usage.ai,credits_balance:s.credits_balance||0,credits_used:s.credits_used||0}).eq('id',wid);
 if(r3.error)throw r3.error;}
 async function loadRemote(){
 const c=sbClient();if(!c||!remoteUser)return false;
 const prevSet=(db&&db.ws&&db.ws.settings)?db.ws.settings:null;
+const prevHist=(db&&db.ws&&db.ws.credit_history)||[];
 let q;
 try{q=await c.from('workspaces').select('*').eq('owner_id',remoteUser.id).maybeSingle()}
 catch(e){toast('تعذر الوصول إلى قاعدة البيانات — تحقق من الإنترنت','err');return false}
@@ -171,14 +178,15 @@ onboarded:(prevSet&&prevSet.onboarded===true),goals:(prevSet&&prevSet.goals)||[]
 onboardingStep:(prevSet&&prevSet.onboardingStep)||1,obStep:(prevSet&&prevSet.obStep)||1,obBuilt:!!(prevSet&&prevSet.obBuilt),
 onboardingAgentId:(prevSet&&prevSet.onboardingAgentId)||null,onboardingWidgetId:(prevSet&&prevSet.onboardingWidgetId)||null,
 obAgentId:(prevSet&&prevSet.obAgentId)||null,obWidgetId:(prevSet&&prevSet.obWidgetId)||null},
-plan:wsRow.plan||'free',usage:{ai:wsRow.usage_ai||0},agents:[],widgets:[],kb:[],contacts:[],convos:[],invoices:[]};
+plan:wsRow.plan||'free',usage:{ai:wsRow.usage_ai||0},agents:[],widgets:[],kb:[],contacts:[],convos:[],invoices:[],
+credits_balance:wsRow.credits_balance!=null?wsRow.credits_balance:20,credits_used:wsRow.credits_used||0,credit_history:prevHist};
 const tabs=[['agents','agents'],['widgets','widgets'],['knowledge_docs','kb'],['contacts','contacts'],['conversations','convos'],['invoices','invoices']];
 for(const p of tabs){const r=await c.from(p[0]).select('data').eq('workspace_id',wsRow.id);db.ws[p[1]]=(r.data||[]).map(function(x){return x.data})}
 db.ws.convos.sort(function(a,b){return (b.updatedAt||0)-(a.updatedAt||0)});
 return true;}
 async function provisionRemote(c){
 const kit=starterKit();
-const r=await c.from('workspaces').insert({owner_id:remoteUser.id,name:kit.settings.name,type:kit.settings.type,lang:kit.settings.lang,tz:kit.settings.tz,team:kit.settings.team,plan:'free',usage_ai:0}).select().single();
+const r=await c.from('workspaces').insert({owner_id:remoteUser.id,name:kit.settings.name,type:kit.settings.type,lang:kit.settings.lang,tz:kit.settings.tz,team:kit.settings.team,plan:'free',usage_ai:0,credits_balance:20,credits_used:0}).select().single();
 if(r.error){toast('تعذر إنشاء مساحة العمل: '+r.error.message,'err');return null}
 await pushTables(c,r.data.id,kit);return r.data;}
 async function sbUpsert(table,row){
@@ -248,6 +256,7 @@ try{
 const res=await fetch(apiBase()+'/ai-respond',{method:'POST',headers:{'Content-Type':'application/json','api-key':cfg.key},body:JSON.stringify({widget_id:widget.id,token:widget.token,message:text,conversation_id:convo?convo.id:null})});
 const j=await res.json().catch(function(){return{}});
 if(j&&j.handoff_locked)return {text:j.message||'المحادثة بيد فريق الدعم الآن.',system:true};
+if(j&&j.error==='no_credits')return {text:j.message||'رصيدك من الردود نفد. اشترِ حزمة جديدة من صفحة الرصيد.',system:true};
 if(j&&j.error==='limit')return {text:j.message||'تم تجاوز الحد الشهري لرسائل الذكاء الاصطناعي. الرجاء ترقية الخطة.',system:true};
 if(j&&j.error){console.warn('ai-respond error → fallback للمحرك المحلي:',j.error);throw new Error(j.message||j.error)}
 if(j&&j.reply){if(j.handoff&&convo)convo.status='handoff';return {text:j.reply,handoff:!!j.handoff}}
@@ -255,9 +264,7 @@ throw new Error('استجابة غير صالحة من الخادم');
 }catch(e){console.warn('ai-respond fallback:',e&&e.message)}
 }
 return new Promise(function(resolve){setTimeout(function(){resolve(aiRespondLocal(text,agent,widget?widget.agentId:undefined))},600)});}
-/* ================================================================
-Knowledge Processing — مع معالجة محلية تلقائية عند غياب دوال الخادم
-================================================================ */
+/* ================= Knowledge Processing ================= */
 function refreshKbUI(){var h=location.hash||'';if(h.indexOf('#/app/kb')===0||h.indexOf('#/onboarding')===0)route()}
 async function fetchPage(url){
 try{
@@ -553,7 +560,10 @@ getAIReply(text,agentOf(),w,convo).then(function(res){
 typing(false);
 if(res.system){pushMsg('system',res.text);if(convo){convo.messages.push({from:'system',text:res.text,at:now()})}}
 else{
-if(convo){convo.messages.push({from:'ai',text:res.text,at:now()});convo.updatedAt=now();if(ws())ws().usage.ai++;updateCustomerInsights(convo);}
+if(convo){convo.messages.push({from:'ai',text:res.text,at:now()});convo.updatedAt=now();
+if(ws()){ws().usage.ai++;
+if((ws().credits_balance||0)>0){ws().credits_balance--;ws().credit_history=ws().credit_history||[];ws().credit_history.unshift({type:'usage',amount:-1,description:'رد ذكي عبر الويدجت',created_at:new Date().toISOString()});}}
+updateCustomerInsights(convo);}
 pushMsg('ai',res.text);
 if(w.sound)beep();
 if(res.handoff)pushMsg('system','تم تحويل المحادثة إلى فريق الدعم ✋');}
@@ -591,7 +601,7 @@ app.innerHTML=
 +'<h1 class="font-display font-extrabold text-4xl md:text-5xl leading-[1.3] mb-5">أضف <span class="text-tiffany-400">موظف AI</span> إلى موقعك خلال دقائق</h1>'
 +'<p class="text-ink-300 text-lg leading-8 mb-8">أنشئ وكلاء ذكاء اصطناعي مدرّبين على بيانات عملك فقط — بدون اختراع معلومات — خصّص ويدجت الدردشة، وانسخ سطرًا واحدًا من الكود إلى موقعك.</p>'
 +'<div class="flex flex-wrap gap-3"><button data-action="go" data-to="'+(me()?'#/app':'#/signup')+'" class="btn-primary !text-base !px-7 !py-3.5">'+(me()?'افتح لوحة التحكم':'ابدأ مجانًا')+'</button><button data-action="scroll" data-to="#how" class="btn-ghost !text-base !px-7 !py-3.5">شاهد كيف يعمل</button></div>'
-+'<div class="flex flex-wrap gap-x-6 gap-y-2 mt-8 text-xs text-ink-400"><span class="flex items-center gap-1.5">'+icon('check','w-4 h-4 text-tiffany-500')+' Grounded AI — لا يخترع أسعارًا ولا منتجات</span><span class="flex items-center gap-1.5">'+icon('check','w-4 h-4 text-tiffany-500')+' معرفة معزولة لكل Agent</span><span class="flex items-center gap-1.5">'+icon('shield','w-4 h-4 text-tiffany-500')+' المفاتيح والأسرار لا تغادر الخادم</span></div></div>'
++'<div class="flex flex-wrap gap-x-6 gap-y-2 mt-8 text-xs text-ink-400"><span class="flex items-center gap-1.5">'+icon('check','w-4 h-4 text-tiffany-500')+' Grounded AI — لا يخترع أسعارًا ولا منتجات</span><span class="flex items-center gap-1.5">'+icon('check','w-4 h-4 text-tiffany-500')+' معرفة معزولة لكل Agent</span><span class="flex items-center gap-1.5">'+icon('shield','w-4 h-4 text-tiffany-500')+' بدون اشتراك شهري — ادفع مقابل الردود فقط</span></div></div>'
 +'<div class="relative fadeUp"><div class="glass rounded-2xl p-4 shadow-soft">'
 +'<div class="flex items-center gap-1.5 pb-3 border-b border-ink-800 mb-3"><span class="w-2.5 h-2.5 rounded-full bg-red-400"></span><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span><span class="ltr text-[11px] text-ink-500 px-2 font-mono">your-store.com</span></div>'
 +'<div class="relative h-[460px] rounded-xl bg-ink-900 overflow-hidden"><div class="p-5 space-y-3 opacity-60"><div class="h-4 w-2/5 bg-ink-800 rounded"></div><div class="h-3 w-4/5 bg-ink-850 rounded"></div><div class="h-3 w-3/5 bg-ink-850 rounded"></div><div class="grid grid-cols-3 gap-3 pt-2"><div class="h-20 bg-ink-850 rounded-lg"></div><div class="h-20 bg-ink-850 rounded-lg"></div><div class="h-20 bg-ink-850 rounded-lg"></div></div></div>'
@@ -603,11 +613,11 @@ app.innerHTML=
 +[['shield','Grounded AI','يجيب فقط من قاعدة معرفتك. إذا لم توجد المعلومة يقول ذلك بوضوح — لا يخترع أسعارًا ولا منتجات ولا مواعيد.'],['book','Knowledge Base حقيقية','زحف موقعك (حتى 10 صفحات)، رفع PDF/DOCX/CSV/Excel، نصوص يدوية — مع بديل يدوي عند فشل الزحف.'],['users','CRM تلقائي','تصنيف العملاء (مشتري/مهتم/محتمل)، Lead Score من 0 إلى 100، ووسوم تلقائية تتطور مع المحادثة.'],['bolt','Widget قابل للتخصيص كليًا','ألوان الرأس والخلفية والرسائل، الأبعاد، الظل، الإطار، رسالة عدم الاتصال — معاينة حية.'],['chat','محادثات حية + Handoff','كل رسالة تظهر فورًا في لوحة التحكم، وتحويل بشري يوقف الـ AI حتى يعيد الموظف تفعيله.'],['db','عمل متصل أو محلي','مزامنة كاملة مع الخادم عند توفره، ووضع محلي آمن عند انقطاع الاتصال.']].map(function(f){return '<div class="rounded-2xl p-6 bg-ink-850 border border-ink-800 hover:border-tiffany-500/40 hover:-translate-y-0.5 transition"><div class="w-10 h-10 rounded-lg bg-tiffany-500/10 text-tiffany-400 flex items-center justify-center mb-4">'+icon(f[0])+'</div><h3 class="font-display font-bold mb-1.5">'+f[1]+'</h3><p class="text-sm text-ink-400 leading-6">'+f[2]+'</p></div>'}).join('')+'</div></div></section>'
 +'<section id="usecases" class="bg-ink-900/60 border-y border-ink-800 py-20"><div class="max-w-7xl mx-auto px-4"><h2 class="sec-title">لمن بُنيت إدارة ســوشـــيــــال؟</h2><p class="sec-sub">أي نشاط يريد الرد الفوري على عملائه — على مدار الساعة.</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-10">'
 +['المتاجر الإلكترونية','الشركات','العيادات','المطاعم','الصالونات','العقارات','مكاتب الخدمات','مراكز التدريب'].map(function(u){return '<div class="rounded-xl bg-ink-850 border border-ink-800 p-5 text-center text-sm text-ink-200 hover:border-tiffany-500/40 hover:text-tiffany-300 transition">'+u+'</div>'}).join('')+'</div></div></section>'
-+'<section id="pricing" class="max-w-7xl mx-auto px-4 py-20"><h2 class="sec-title">أسعار واضحة</h2><p class="sec-sub">ابدأ مجانًا مع 6 Agents، وترقَّ عندما تكبر.</p><div class="grid md:grid-cols-3 gap-5 mt-10">'
-+Object.keys(PLANS).map(function(k){var p=PLANS[k];return '<div class="rounded-2xl p-7 border relative '+(k==='growth'?'border-tiffany-500/60 bg-tiffany-500/5 shadow-glow':'border-ink-800 bg-ink-850')+'">'+(k==='growth'?'<span class="absolute -top-3 right-6 text-[11px] font-bold bg-tiffany-500 text-ink-950 rounded-full px-3 py-1">الأكثر شيوعًا</span>':'')+'<h3 class="font-display font-bold text-lg">'+p.name+'</h3><div class="my-4"><span class="font-display font-extrabold text-4xl">'+p.price+'</span> <span class="text-ink-400 text-sm">ريال / شهريًا</span></div><ul class="space-y-2.5 text-sm text-ink-300 mb-7">'+p.feat.map(function(f){return '<li class="flex gap-2">'+icon('check','w-4 h-4 text-tiffany-500 mt-0.5')+' '+f+'</li>'}).join('')+'</ul><button data-action="go" data-to="#/signup" class="'+(k==='growth'?'btn-primary':'btn-ghost')+' w-full">'+(k==='free'?'ابدأ مجانًا':'اشترك')+'</button></div>'}).join('')+'</div></section>'
++'<section id="pricing" class="max-w-7xl mx-auto px-4 py-20"><h2 class="sec-title">بدون اشتراك شهري — ادفع مقابل الردود فقط</h2><p class="sec-sub">اشترِ حزمة ردود مرة واحدة واستهلكها متى شئت. تبدأ بـ 20 ردًا مجانيًا.</p><div class="grid md:grid-cols-2 lg:grid-cols-4 gap-5 mt-10">'
++PKGS.map(function(p){return '<div class="rounded-2xl p-7 border relative '+(p.popular?'border-tiffany-500/60 bg-tiffany-500/5 shadow-glow':'border-ink-800 bg-ink-850')+'">'+(p.popular?'<span class="absolute -top-3 right-6 text-[11px] font-bold bg-tiffany-500 text-ink-950 rounded-full px-3 py-1">الأكثر شيوعًا</span>':'')+'<h3 class="font-display font-bold text-lg">'+p.name+'</h3><div class="my-4"><span class="font-display font-extrabold text-4xl">'+p.credits.toLocaleString()+'</span> <span class="text-ink-400 text-sm">رد</span></div><div class="text-2xl font-bold text-tiffany-400">$'+p.price+'</div><div class="text-[11px] text-ink-500 mt-1 mb-6">$'+(p.price/p.credits).toFixed(3)+' / رد</div><button data-action="go" data-to="#/signup" class="'+(p.popular?'btn-primary':'btn-ghost')+' w-full">ابدأ الآن</button></div>'}).join('')+'</div></section>'
 +'<section id="faq" class="max-w-4xl mx-auto px-4 pb-20"><h2 class="sec-title">الأسئلة الشائعة</h2><div class="mt-8 space-y-3">'
-+[['هل يخترع الـ AI معلومات غير موجودة؟','لا. يعمل بمبدأ Grounded AI الصارم: يجيب فقط من قاعدة معرفتك، وإذا لم يجد المعلومة يرد نصًا: «عذراً، هذه المعلومة غير متوفرة لدي حالياً، هل أستطيع تحويلك لأحد موظفي الدعم؟».'],['ماذا لو انقطع الاتصال بالخادم؟','يستمر التطبيق بالوضع المحلي تلقائيًا: بياناتك تُحفظ على جهازك وتعاد المزامنة بضغطة زر عند عودة الاتصال.'],['ماذا لو فشل زحف رابط موقعي؟','يفتح لك صندوقًا لتلصق محتوى الموقع يدويًا، فيُضاف فورًا كمصدر معرفة جاهز.'],['ماذا يحدث عندما يطلب العميل موظفًا؟','تتحول المحادثة إلى Human Handoff ويتوقف الـ AI عن الرد حتى يعيد الموظف تفعيله.'],['هل بياناتي معزولة؟','نعم، سياسات RLS على مستوى قاعدة البيانات تربط كل سجل بمساحة عملك فقط، ومعرفة كل Agent معزولة عن غيره.']].map(function(f){return '<details class="faq glass rounded-xl group"><summary class="flex items-center justify-between cursor-pointer px-5 py-4 font-semibold text-sm list-none">'+f[0]+'<span class="text-tiffany-400 transition group-open:rotate-45 text-xl leading-none">+</span></summary><p class="px-5 pb-5 text-sm text-ink-400 leading-7">'+f[1]+'</p></details>'}).join('')+'</div></section>'
-+'<section class="max-w-5xl mx-auto px-4 pb-24"><div class="rounded-3xl p-10 md:p-14 text-center relative overflow-hidden border border-tiffany-500/30 bg-gradient-to-b from-tiffany-500/15 to-transparent"><h2 class="font-display font-extrabold text-3xl md:text-4xl mb-4">جاهز توظّف أول موظف AI لديك؟</h2><p class="text-ink-300 mb-8">انضم إلى إدارة ســوشـــيــــال الآن وأنشئ وكيلك الأول خلال دقائق — مجانًا مع 6 Agents.</p><button data-action="go" data-to="#/signup" class="btn-primary !text-base !px-9 !py-4">ابدأ مجانًا الآن</button></div></section>'
++[['هل يخترع الـ AI معلومات غير موجودة؟','لا. يعمل بمبدأ Grounded AI الصارم: يجيب فقط من قاعدة معرفتك، وإذا لم يجد المعلومة يرد نصًا: «عذراً، هذه المعلومة غير متوفرة لدي حالياً، هل أستطيع تحويلك لأحد موظفي الدعم؟».'],['هل يوجد اشتراك شهري؟','لا. تشتري حزمة ردود مرة واحدة (مثلاً 1000 رد بـ 30 دولارًا) وتستهلكها متى شئت — بدون أي التزام شهري.'],['ماذا لو انقطع الاتصال بالخادم؟','يستمر التطبيق بالوضع المحلي تلقائيًا: بياناتك تُحفظ على جهازك وتعاد المزامنة بضغطة زر عند عودة الاتصال.'],['ماذا لو فشل زحف رابط موقعي؟','يفتح لك صندوقًا لتلصق محتوى الموقع يدويًا، فيُضاف فورًا كمصدر معرفة جاهز.'],['ماذا يحدث عندما يطلب العميل موظفًا؟','تتحول المحادثة إلى Human Handoff ويتوقف الـ AI عن الرد حتى يعيد الموظف تفعيله.'],['هل بياناتي معزولة؟','نعم، سياسات RLS على مستوى قاعدة البيانات تربط كل سجل بمساحة عملك فقط، ومعرفة كل Agent معزولة عن غيره.']].map(function(f){return '<details class="faq glass rounded-xl group"><summary class="flex items-center justify-between cursor-pointer px-5 py-4 font-semibold text-sm list-none">'+f[0]+'<span class="text-tiffany-400 transition group-open:rotate-45 text-xl leading-none">+</span></summary><p class="px-5 pb-5 text-sm text-ink-400 leading-7">'+f[1]+'</p></details>'}).join('')+'</div></section>'
++'<section class="max-w-5xl mx-auto px-4 pb-24"><div class="rounded-3xl p-10 md:p-14 text-center relative overflow-hidden border border-tiffany-500/30 bg-gradient-to-b from-tiffany-500/15 to-transparent"><h2 class="font-display font-extrabold text-3xl md:text-4xl mb-4">جاهز توظّف أول موظف AI لديك؟</h2><p class="text-ink-300 mb-8">انضم إلى إدارة ســوشـــيــــال الآن وأنشئ وكيلك الأول خلال دقائق — مع 20 ردًا مجانيًا للتجربة.</p><button data-action="go" data-to="#/signup" class="btn-primary !text-base !px-9 !py-4">ابدأ مجانًا الآن</button></div></section>'
 +'<footer class="border-t border-ink-800 py-10 text-center text-sm text-ink-500"><div class="flex items-center justify-center gap-2 mb-3">'+brandHTML()+'</div>منصة إدارة ســوشـــيــــال لموظفي الذكاء الاصطناعي — كل الحقوق محفوظة '+new Date().getFullYear()+'</footer>';
 var heroHost=document.querySelector('#hero-widget .pointer-events-auto');
 if(heroHost){
@@ -642,7 +652,7 @@ function engSource(k){var el=document.getElementById(ENG_SRC[k]);return el?el.te
 var ENG_STEPS='<ol class="list-decimal pr-5 space-y-3 text-sm text-ink-300 leading-7"><li>شغّل ترحيل المرحلة 2 ثم «عمود agent_id» ثم «٤. العزل الصارم والتشخيص» في SQL Editor.</li><li>انشر الدوال الخمس (ai-respond، verify-widget، kb-process، kb-crawl، kb-ingest) بعد نسخها إلى مجلدات <span class="ltr">supabase/functions</span>.</li><li>ثبّت السر: <span class="ltr">supabase secrets set GEMINI_API_KEY=...</span></li><li>ارفع <span class="ltr">widget.js</span> على CDN واستبدل مصدر السكربت في كود التضمين.</li><li>جرّب من صفحة Knowledge Base: ملف + نص يدوي + رابط موقع — وتابع الحالات الحقيقية (رفع → معالجة → تضمينات → جاهز).</li><li>استعلم عن <span class="ltr">kb_diagnostics</span> من SQL Editor للتحقق من عدد المقاطع والتضمينات لكل مستند.</li></ol>';
 function renderSetup(){
 var connected=isRemote();
-var phases=[['Supabase + قاعدة البيانات + RLS',true],['حفظ الودجات/الوكلاء مباشرة في Supabase',true],['widget.js + verify-widget + ai-respond (RAG)',true],['Knowledge Base: زحف + ملفات + نصوص + بديل يدوي',true],['عزل المعرفة لكل Agent + منع الإجابات العامة',true],['CRM: تصنيف + Lead Score + وسوم تلقائية',true],['معالج تهيئة (Onboarding) من 8 خطوات',true],['وضع محلي آمن عند انقطاع الخادم + إعادة مزامنة',true],['Billing + دفع حقيقي + إشعارات بريد',false]];
+var phases=[['Supabase + قاعدة البيانات + RLS',true],['حفظ الودجات/الوكلاء مباشرة في Supabase',true],['widget.js + verify-widget + ai-respond (RAG)',true],['Knowledge Base: زحف + ملفات + نصوص + بديل يدوي',true],['عزل المعرفة لكل Agent + منع الإجابات العامة',true],['CRM: تصنيف + Lead Score + وسوم تلقائية',true],['معالج تهيئة (Onboarding) من 8 خطوات',true],['وضع محلي آمن عند انقطاع الخادم + إعادة مزامنة',true],['نظام رصيد الردود (بدون اشتراك شهري)',true]];
 document.getElementById('app').innerHTML='<div class="min-h-screen max-w-4xl mx-auto px-4 py-10">'
 +'<div class="flex items-center justify-between mb-8 flex-wrap gap-3"><a href="#/" class="flex items-center gap-2 font-display font-extrabold text-lg">'+brandHTML()+'</a><div class="flex gap-2">'+(me()?'<button data-action="go" data-to="#/app" class="btn-ghost !py-2 text-sm">لوحة التحكم</button>':'')+'<a href="#/" class="btn-ghost !py-2 text-sm">الرئيسية</a></div></div>'
 +'<h1 class="font-display font-extrabold text-3xl mb-2">الخلفية والمحرك</h1>'
@@ -786,7 +796,7 @@ const soon=['واتساب','انستقرام','ماسنجر','إيميل','تي�
 body='<div class="space-y-3">'
 +'<div class="glass rounded-xl p-4 flex items-center justify-between border border-tiffany-500" style="background:rgba(10,186,181,0.1)"><div class="flex items-center gap-3"><span class="w-9 h-9 rounded-lg bg-tiffany-500/10 text-tiffany-400 flex items-center justify-center">'+icon('widget','w-4 h-4')+'</span><div><div class="text-sm font-bold">ويدجت الموقع</div><div class="text-[11px] text-ink-500">مفعّل وجاهز الآن</div></div></div><span class="text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-1">✓ مفعّل</span></div>'
 +'<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">'+soon.map(function(c){return '<button type="button" data-action="soon-channel" data-id="'+c+'" class="glass rounded-xl p-3 text-center opacity-60 hover:opacity-90 transition cursor-pointer"><div class="text-xs font-semibold">'+c+'</div><div class="text-[9px] text-ink-500 mt-0.5">قريباً — اضغط للتفاصيل</div></button>'}).join('')+'</div>'
-+'<div class="glass rounded-xl p-4 text-xs text-ink-300 flex items-center justify-between flex-wrap gap-2"><span>✨ باقة مجانية · قناة واحدة مشمولة</span><button data-action="go" data-to="#/app/billing" class="text-tiffany-400 hover:underline">عرض الباقات</button></div></div>';}
++'<div class="glass rounded-xl p-4 text-xs text-ink-300 flex items-center justify-between flex-wrap gap-2"><span>✨ باقة مجانية · 20 ردًا تجريبيًا · بدون اشتراك شهري</span><button data-action="go" data-to="#/app/billing" class="text-tiffany-400 hover:underline">شحن الرصيد</button></div></div>';}
 else if(step===4){
 title='خلي وكيلك يعرف منتجاتك';
 sub='حط رابط صفحة وحدة ونقراها تلقائياً، أو ارفع ملف، أو اكتب بنفسك.';
@@ -825,12 +835,11 @@ sub='شات حي متصل فعليًا — يجيب من المعرفة الحق
 body='<div class="space-y-4"><div class="relative h-[540px] rounded-xl bg-ink-900 border border-ink-800 overflow-hidden grid-bg"><div id="ob-widget-host" class="absolute inset-0"></div></div>'
 +'<div class="flex gap-2 flex-wrap"><button data-action="ob-next" class="btn-primary">وكيلي جاهز</button><button data-action="ob-test-page" class="btn-ghost">المعاينة</button><button data-action="ob-builder" class="btn-ghost">الإعداد</button></div></div>';}
 else if(step===8){
-title='اختر خطتك';
-sub='يمكنك التغيير لاحقًا في أي وقت. الخطة المجانية تشمل 6 Agents.';
-body='<div class="grid md:grid-cols-3 gap-4 mb-5">'+Object.keys(PLANS).map(function(k){var p=PLANS[k];
-const cur=(s.plan===k);
-return '<div class="glass rounded-2xl p-5 border '+(cur?'border-tiffany-500':'border-transparent')+'"><h3 class="font-display font-bold">'+p.name+(cur?' <span class="text-[10px] text-tiffany-300 bg-tiffany-500/10 border border-tiffany-500/30 rounded-full px-2 py-0.5">الباقة الحالية</span>':'')+'</h3><div class="my-3 font-display font-extrabold text-2xl">'+p.price+' <span class="text-xs text-ink-400 font-normal">ريال/شهر</span></div><ul class="text-[11px] text-ink-400 space-y-1.5 mb-4">'+p.feat.map(function(f){return '<li class="flex gap-1.5">'+icon('check','w-3 h-3 text-tiffany-500 mt-0.5 flex-none')+' '+f+'</li>'}).join('')+'</ul>'+(cur?'<button class="btn-ghost w-full" disabled>مفعّلة</button>':'<button data-action="choose-plan" data-id="'+k+'" class="'+(k==='growth'?'btn-primary':'btn-ghost')+' w-full">اختيار '+p.name+'</button>')+'</div>'}).join('')+'</div>'
-+'<button data-action="ob-finish" class="btn-primary w-full !py-3.5 ob-next-active">إنهاء الإعداد</button>';}
+title='رصيدك التجريبي جاهز 🎁';
+sub='تبدأ بـ 20 ردًا مجانيًا — بدون أي اشتراك شهري. عندما تنتهي، اشترِ حزمة ردود من صفحة الرصيد.';
+body='<div class="glass rounded-2xl p-6 mb-4 text-center border border-tiffany-500/40"><div class="text-4xl font-display font-extrabold text-tiffany-400 mb-1">20 رد مجاني</div><div class="text-xs text-ink-500">تُضاف تلقائيًا لحسابك عند إنهاء الإعداد</div></div>'
++'<div class="grid md:grid-cols-3 gap-3 mb-5">'+PKGS.slice(0,3).map(function(p){return '<div class="glass rounded-xl p-4 text-center '+(p.popular?'border border-tiffany-500/50':'')+'"><div class="font-bold text-sm mb-1">'+p.name+'</div><div class="text-2xl font-extrabold">'+p.credits.toLocaleString()+'</div><div class="text-[10px] text-ink-500 mb-2">رد</div><div class="text-tiffany-400 font-bold">$'+p.price+'</div></div>'}).join('')+'</div>'
++'<button data-action="ob-finish" class="btn-primary w-full !py-3.5 ob-next-active">إنهاء الإعداد والبدء</button>';}
 document.getElementById('app').innerHTML='<div class="min-h-screen max-w-5xl mx-auto px-4 py-8">'
 +'<div class="flex items-center justify-between mb-6 flex-wrap gap-3"><div class="flex items-center gap-2 font-display font-extrabold text-lg">'+logoSVG()+' معالج التهيئة</div>'
 +'<div class="flex items-center gap-2">'+(step===1?'<button data-action="ob-skip" class="btn-ghost !py-2 text-xs">تخطي التهيئة</button>':'')+(step>1?'<button data-action="ob-back" class="btn-ghost !py-2 text-xs">رجوع</button>':'')+'</div></div>'
@@ -845,7 +854,7 @@ if(step===6&&!st.obBuilt)setTimeout(obRunBuild,400);
 if(step===7)obMountTest();}
 /* ================= Dashboard ================= */
 var PAGES={'':'home',conversations:'convos',agents:'agents',widgets:'widgets',builder:'builder',contacts:'contacts',kb:'kb',analytics:'analytics',settings:'settings',billing:'billing'};
-var NAV=[['','الرئيسية','home'],['conversations','المحادثات','chat'],['agents','AI Agents','bot'],['widgets','Widgets','widget'],['contacts','العملاء','users'],['kb','Knowledge Base','book'],['analytics','التحليلات','chart'],['settings','الإعدادات','gear'],['billing','الاشتراك','card']];
+var NAV=[['','الرئيسية','home'],['conversations','المحادثات','chat'],['agents','AI Agents','bot'],['widgets','Widgets','widget'],['contacts','العملاء','users'],['kb','Knowledge Base','book'],['analytics','التحليلات','chart'],['settings','الإعدادات','gear'],['billing','الرصيد','card']];
 function handoffCount(){var s=ws();return s?s.convos.filter(function(c){return c.status==='handoff'}).length:0}
 function statusBadge(st){return st==='active'?'<span class="text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full px-2 py-0.5 flex-none">نشطة</span>':st==='handoff'?'<span class="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded-full px-2 py-0.5 flex-none">تحويل بشري</span>':'<span class="text-[10px] bg-ink-800 text-ink-400 border border-ink-700 rounded-full px-2 py-0.5 flex-none">مغلقة</span>'}
 function classBadge(c){
@@ -873,7 +882,7 @@ document.getElementById('app').innerHTML='<div class="min-h-screen flex">'
 +'<button data-action="logout" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm text-red-300 hover:bg-red-500/10">'+icon('out','w-[18px] h-[18px]')+' '+(isDemo?'الخروج من الوضع التجريبي':'تسجيل الخروج')+'</button></div></aside>'
 +'<div class="flex-1 min-w-0"><header class="h-16 sticky top-0 z-30 glass flex items-center justify-between px-4 md:px-8">'
 +'<div class="flex items-center gap-3"><button data-action="sb" class="lg:hidden text-ink-300">'+icon('menu')+'</button><h1 class="font-display font-bold text-lg">'+title+'</h1>'+(isDemo?'<span class="hidden sm:inline-flex text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-full px-2.5 py-1">وضع تجريبي — البيانات محلية لكنها محفوظة</span>':'')+'</div>'
-+'<div class="flex items-center gap-3"><span class="hidden sm:flex items-center gap-2 text-xs text-ink-400 bg-ink-850 border border-ink-800 rounded-full px-3 py-1.5">'+icon('bolt','w-3.5 h-3.5 text-tiffany-400')+' '+s.usage.ai+' / '+PLANS[s.plan].msgs+' رسالة AI</span><div class="w-9 h-9 rounded-full bg-tiffany-500/15 border border-tiffany-500/40 text-tiffany-300 flex items-center justify-center font-bold text-sm">'+esc(u.name.charAt(0))+'</div></div></header>'
++'<div class="flex items-center gap-3"><span class="hidden sm:flex items-center gap-2 text-xs text-ink-400 bg-ink-850 border border-ink-800 rounded-full px-3 py-1.5">'+icon('bolt','w-3.5 h-3.5 text-tiffany-400')+' '+(s.credits_balance!=null?s.credits_balance:0)+' رد متبقي</span><div class="w-9 h-9 rounded-full bg-tiffany-500/15 border border-tiffany-500/40 text-tiffany-300 flex items-center justify-center font-bold text-sm">'+esc(u.name.charAt(0))+'</div></div></header>'
 +'<main class="p-4 md:p-8 max-w-[1200px]">'+body+'</main></div></div>'
 +'<div id="sb-overlay" class="fixed inset-0 bg-black/60 z-30 hidden lg:hidden" data-action="sb"></div>';}
 function statCard(ic,label,val,sub){return '<div class="glass rounded-2xl p-5"><div class="flex items-center justify-between mb-3"><span class="text-xs text-ink-400">'+label+'</span><span class="w-9 h-9 rounded-xl bg-tiffany-500/10 text-tiffany-400 flex items-center justify-center">'+icon(ic,'w-4 h-4')+'</span></div><div class="font-display font-extrabold text-2xl">'+val+'</div>'+(sub?'<div class="text-[11px] text-ink-500 mt-1">'+sub+'</div>':'')+'</div>'}
@@ -881,7 +890,7 @@ function renderDash(h){
 var seg=(h.split('?')[0].match(/#\/app\/?([\w-]*)/)||[,''])[1];
 var page=PAGES[seg]||'home';
 if(page==='home'&&ws()&&ws().settings.onboarded!==true){go('#/onboarding');return}
-var titles={home:'الرئيسية',convos:'المحادثات',agents:'AI Agents',widgets:'Widgets',builder:'Widget Builder',contacts:'العملاء',kb:'Knowledge Base',analytics:'التحليلات',settings:'الإعدادات',billing:'الاشتراك'};
+var titles={home:'الرئيسية',convos:'المحادثات',agents:'AI Agents',widgets:'Widgets',builder:'Widget Builder',contacts:'العملاء',kb:'Knowledge Base',analytics:'التحليلات',settings:'الإعدادات',billing:'الرصيد والباقات'};
 var body='';
 if(page==='home')body=pgHome();
 else if(page==='convos')body=pgConvos(h);
@@ -899,7 +908,6 @@ function pgHome(){
 var w=ws();var u=me();var isDemo=!!(u&&u.demo);
 var today=w.convos.reduce(function(s,c){return s+c.messages.filter(function(m){return now()-m.at<DAY}).length},0);
 var month=w.convos.reduce(function(s,c){return s+c.messages.filter(function(m){return now()-m.at<30*DAY}).length},0);
-var cap=PLANS[w.plan].msgs;
 var cust=w.contacts||[];
 var buyers=cust.filter(function(c){return c.class==='مشتري'}).length;
 var prospects=cust.filter(function(c){return c.class==='عميل محتمل'}).length;
@@ -918,7 +926,7 @@ else banner=isRemote()
 :(isDemo?'<div class="mb-4 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-2.5 flex items-center gap-2 flex-wrap">'+icon('eye','w-4 h-4')+' وضع تجريبي بدون حساب — بياناتك المحلية محفوظة وتبقى بعد إعادة الفتح. <a class="underline font-bold" href="#/signup">أنشئ حسابًا حقيقيًا</a></div>'
 :'<div class="mb-4 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-2.5 flex items-center gap-2 flex-wrap">'+icon('bolt','w-4 h-4')+' تعمل الآن على تخزين محلي آمن. <button data-action="go" data-to="#/setup" class="underline font-bold">اربط قاعدة بيانات Supabase →</button></div>');
 return banner
-+'<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">'+statCard('chat','المحادثات',w.convos.length,handoffCount()+' بانتظار تحويل بشري')+statCard('users','العملاء',cust.length,interested+' مهتم')+statCard('send','رسائل اليوم',today)+statCard('chart','رسائل الشهر',month)+statCard('bot','Agents',w.agents.length,'الحد في خطتك: '+PLANS[w.plan].agents)+statCard('widget','Widgets',w.widgets.length,w.widgets.filter(function(x){return x.enabled}).length+' نشط')+statCard('bolt','استخدام AI',Math.min(100,Math.round(w.usage.ai/cap*100))+'%',w.usage.ai+' من '+cap)+statCard('shield','الخطة',PLANS[w.plan].name)+'</div>'
++'<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">'+statCard('chat','المحادثات',w.convos.length,handoffCount()+' بانتظار تحويل بشري')+statCard('users','العملاء',cust.length,interested+' مهتم')+statCard('send','رسائل اليوم',today)+statCard('chart','رسائل الشهر',month)+statCard('bot','Agents',w.agents.length,'الحد في خطتك: '+PLANS[w.plan].agents)+statCard('widget','Widgets',w.widgets.length,w.widgets.filter(function(x){return x.enabled}).length+' نشط')+statCard('bolt','ردود متبقية',(w.credits_balance!=null?w.credits_balance:0),'من رصيدك المدفوع')+statCard('shield','المستهلك',(w.credits_used||0),'رد مستهلك')+'</div>'
 +'<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">'+statCard('users','عملاء محتملون',prospects)+statCard('check','مشترون',buyers)+statCard('chart','معدل التحويل',conv+'%','مشترون ÷ إجمالي العملاء')+statCard('spark','متوسط Lead Score',avg,'من 0 إلى 100')+'</div>'
 +'<div class="grid lg:grid-cols-3 gap-4 mt-4"><div class="lg:col-span-2 glass rounded-2xl p-6"><div class="flex items-center justify-between mb-5"><h3 class="font-display font-bold">نشاط الرسائل — 14 يومًا</h3><button data-action="go" data-to="#/app/analytics" class="text-xs text-tiffany-400 hover:underline">التحليلات الكاملة</button></div><div class="flex items-end gap-1.5 h-36">'+days.map(function(d){return '<div class="flex-1 rounded-t-md bar '+(d?'bg-tiffany-500/70':'bg-ink-800')+'" style="height:'+Math.max(d/max*100,4)+'%" title="'+d+'"></div>'}).join('')+'</div></div>'
 +'<div class="glass rounded-2xl p-6"><h3 class="font-display font-bold mb-4">أحدث المحادثات</h3><div class="space-y-2">'+(recent||'<p class="text-sm text-ink-500">لا محادثات بعد — افتح «موقع تجريبي» وابدأ أول محادثة حقيقية.</p>')+'</div></div></div>';}
@@ -1115,13 +1123,29 @@ var teamRows=(s.team||[]).map(function(t,idx){return '<div class="flex items-cen
 return '<div class="grid lg:grid-cols-2 gap-5 items-start"><div class="glass rounded-2xl p-6 space-y-4"><h3 class="font-display font-bold">ملف مساحة العمل</h3><label class="lbl2">اسم النشاط<input id="s-name" class="inp-s" value="'+esc(s.name)+'"></label><label class="lbl2">نوع النشاط<select id="s-type" class="inp-s">'+['متجر إلكتروني','شركة','عيادة','مطعم','صالون','عقارات','مكتب خدمات','مركز تدريب','أخرى'].map(function(t){return '<option '+(t===s.type?'selected':'')+'>'+t+'</option>'}).join('')+'</select></label><label class="lbl2">اللغة الافتراضية<select id="s-lang" class="inp-s">'+['العربية','English'].map(function(t){return '<option '+(t===s.lang?'selected':'')+'>'+t+'</option>'}).join('')+'</select></label><label class="lbl2">المنطقة الزمنية<select id="s-tz" class="inp-s">'+['Asia/Riyadh','Asia/Dubai','Asia/Kuwait','Africa/Cairo'].map(function(t){return '<option '+(t===s.tz?'selected':'')+'>'+t+'</option>'}).join('')+'</select></label><button data-action="save-settings" class="btn-primary">حفظ الإعدادات</button></div>'
 +'<div class="space-y-5"><div class="glass rounded-2xl p-6"><h3 class="font-display font-bold mb-4">الفريق</h3><div class="space-y-2 mb-4">'+(teamRows||'<p class="text-xs text-ink-500">لا أعضاء بعد.</p>')+'</div><form id="f-team" class="flex gap-2"><input name="email" type="email" required class="inp-s ltr" placeholder="teammate@company.com"><button class="btn-ghost !px-4 flex-none">'+icon('plus','w-4 h-4')+'</button></form></div>'
 +'<div class="glass rounded-2xl p-6 border-red-500/20"><h3 class="font-display font-bold mb-2 text-red-300">منطقة الخطر</h3><p class="text-xs text-ink-500 mb-4">إجراءات لا يمكن التراجع عنها.</p><div class="flex gap-2 flex-wrap"><button data-action="reset-ws" class="btn-ghost !border-red-500/40 !text-red-300">إعادة تعيين البيانات</button><button data-action="del-account" class="btn-ghost !border-red-500/40 !text-red-300">حذف الحساب</button></div></div></div></div>';}
+/* صفحة الرصيد — نظام حزم الردود (بدون اشتراك شهري) */
 function pgBilling(){
-var w=ws();var cap=PLANS[w.plan].msgs;var pct=Math.min(100,Math.round(w.usage.ai/cap*100));
-var plans=Object.keys(PLANS).map(function(k){var p=PLANS[k];
-const cur=(w.plan===k);
-return '<div class="rounded-2xl p-6 border '+(cur?'border-tiffany-500/60 bg-tiffany-500/5':'border-ink-800 bg-ink-850')+'"><h3 class="font-display font-bold">'+p.name+(cur?' <span class="text-[10px] text-tiffany-300 bg-tiffany-500/10 border border-tiffany-500/30 rounded-full px-2 py-0.5">خطتك الحالية</span>':'')+'</h3><div class="my-3 font-display font-extrabold text-3xl">'+p.price+'<span class="text-sm text-ink-400 font-normal"> ريال/شهر</span></div><ul class="text-xs text-ink-400 space-y-2 mb-5">'+p.feat.map(function(f){return '<li class="flex gap-2">'+icon('check','w-3.5 h-3.5 text-tiffany-500 mt-0.5 flex-none')+' '+f+'</li>'}).join('')+'</ul>'+(cur?'<button class="btn-ghost w-full" disabled>مفعّلة</button>':'<button data-action="choose-plan" data-id="'+k+'" class="'+(k==='growth'?'btn-primary':'btn-ghost')+' w-full">الترقية إلى '+p.name+'</button>')+'</div>'}).join('');
-var invRows=(w.invoices||[]).map(function(i){return '<tr class="border-t border-ink-850"><td class="px-5 py-3 ltr text-xs">'+esc(i.id)+'</td><td class="px-5 py-3">'+esc(i.plan)+'</td><td class="px-5 py-3">'+i.amount+' ريال</td><td class="px-5 py-3 text-ink-400">'+fmtDate(i.date)+'</td><td class="px-5 py-3"><button data-action="inv" class="text-xs text-tiffany-400 hover:underline">تنزيل PDF</button></td></tr>'}).join('');
-return '<div class="glass rounded-2xl p-6 mb-5"><div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h3 class="font-display font-bold">استخدام رسائل AI هذا الشهر</h3><span class="text-sm text-ink-400">'+w.usage.ai+' / '+cap+'</span></div><div class="h-3 bg-ink-850 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-l from-tiffany-400 to-tiffany-600 rounded-full transition-all" style="width:'+pct+'%"></div></div><p class="text-[11px] text-ink-500 mt-2">الحد يُفرض من الخادم داخل ai-respond قبل أي استدعاء نموذج. بوابة الدفع الحقيقية تصل في المرحلة التالية.</p></div><div class="grid md:grid-cols-3 gap-5 mb-6">'+plans+'</div><div class="glass rounded-2xl overflow-hidden"><div class="px-5 py-4 font-display font-bold border-b border-ink-800">الفواتير</div><div class="overflow-x-auto"><table class="w-full text-sm min-w-[560px]"><thead class="text-ink-500 text-xs"><tr><th class="text-right px-5 py-3">الفاتورة</th><th class="text-right px-5 py-3">الخطة</th><th class="text-right px-5 py-3">المبلغ</th><th class="text-right px-5 py-3">التاريخ</th><th class="text-right px-5 py-3"></th></tr></thead><tbody>'+(invRows||'<tr><td colspan="5" class="p-8 text-center text-ink-500">لا فواتير بعد.</td></tr>')+'</tbody></table></div></div>';}
+var w=ws();
+var credits=w.credits_balance!=null?w.credits_balance:0;
+var used=w.credits_used||0;
+var hist=w.credit_history||[];
+return '<div class="space-y-6">'
++'<div class="glass rounded-2xl p-6"><div class="flex items-center justify-between mb-4"><h3 class="font-display font-bold text-xl">رصيدك الحالي</h3><span class="text-3xl font-display font-extrabold text-tiffany-400">'+credits.toLocaleString()+' رد</span></div>'
++'<div class="grid grid-cols-2 gap-4 text-sm"><div class="bg-ink-850 rounded-xl p-3"><div class="text-ink-400 text-xs mb-1">مستهلك</div><div class="font-bold text-lg">'+used.toLocaleString()+' رد</div></div>'
++'<div class="bg-ink-850 rounded-xl p-3"><div class="text-ink-400 text-xs mb-1">متاح</div><div class="font-bold text-lg text-emerald-400">'+credits.toLocaleString()+' رد</div></div></div>'
++'<p class="text-[11px] text-ink-500 mt-3">بدون اشتراك شهري — تشتري الردود مرة واحدة وتستهلكها متى شئت. يُخصم رد واحد عن كل رد ذكي يُرسل للعميل.</p></div>'
++'<div><h3 class="font-display font-bold text-xl mb-4">اشترِ حزمة ردود</h3><div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">'
++PKGS.map(function(p){return '<div class="glass rounded-2xl p-6 border-2 '+(p.popular?'border-tiffany-500':'border-transparent')+' hover:border-tiffany-500/50 transition relative">'
++(p.popular?'<div class="absolute -top-3 right-5 text-[10px] bg-tiffany-500 text-ink-950 font-bold px-3 py-1 rounded-full">الأكثر شيوعًا</div>':'')
++'<h4 class="font-display font-bold text-lg mb-2">'+p.name+'</h4>'
++'<div class="text-3xl font-display font-extrabold mb-1">'+p.credits.toLocaleString()+'</div><div class="text-ink-400 text-xs mb-4">رد متاح</div>'
++'<div class="text-2xl font-bold text-tiffany-400 mb-1">$'+p.price+'</div><div class="text-[10px] text-ink-500 mb-4">$'+(p.price/p.credits).toFixed(3)+' / رد</div>'
++'<button data-action="buy-package" data-id="'+p.id+'" class="btn-primary w-full">شراء الآن</button></div>'}).join('')
++'</div></div>'
++'<div class="glass rounded-2xl p-6"><h3 class="font-display font-bold text-lg mb-4">سجل المعاملات</h3><div class="space-y-2 text-sm">'
++(hist.slice(0,10).map(function(tx){return '<div class="flex items-center justify-between p-3 bg-ink-850 rounded-xl"><div><div class="font-semibold">'+esc(tx.description)+'</div><div class="text-[10px] text-ink-500">'+new Date(tx.created_at).toLocaleString('ar')+'</div></div>'
++'<div class="'+(tx.amount>0?'text-emerald-400':'text-red-400')+' font-bold">'+(tx.amount>0?'+':'')+tx.amount.toLocaleString()+' رد</div></div>'}).join('')||'<div class="text-ink-500 text-center py-4">لا توجد معاملات بعد</div>')
++'</div></div></div>';}
 /* ---- Modals ---- */
 function modal(html){document.getElementById('modal-root').innerHTML='<div class="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" data-action="modal-close"><div class="glass rounded-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto p-6 fadeUp shadow-soft">'+html+'</div></div>'}
 function closeModal(){document.getElementById('modal-root').innerHTML=''}
@@ -1231,6 +1255,33 @@ var docS=kbDoc(id);
 if(docS&&docS.type==='url'){toast('جارٍ إعادة مزامنة الموقع...');processUrl(docS.name,docS)}
 else toast('المزامنة متاحة لمصادر الروابط فقط','err')}
 else if(a==='kb-edit'){var docE=kbDoc(id);if(docE)modal('<h3 class="font-display font-bold mb-3">تعديل المصدر اليدوي</h3><form id="f-kb-edit" class="space-y-3"><input type="hidden" name="id" value="'+docE.id+'"><label class="lbl2">العنوان (اختياري)<input name="title" class="inp-s" value="'+esc(docE.name)+'"></label><label class="lbl2">المحتوى (مصدر معرفة فقط)<textarea name="content" rows="8" class="inp-s">'+esc(docE.content||'')+'</textarea></label><button class="btn-primary w-full">حفظ وإعادة المعالجة</button></form>')}
+/* ── شراء حزم الردود ── */
+else if(a==='buy-package'){
+var pkg=PKGS.find(function(p){return p.id===id});if(!pkg)return;
+modal('<h3 class="font-display font-bold text-xl mb-4">شراء '+pkg.name+'</h3><div class="space-y-4">'
++'<div class="glass rounded-xl p-4"><div class="flex justify-between mb-2"><span>عدد الردود:</span><span class="font-bold">'+pkg.credits.toLocaleString()+' رد</span></div>'
++'<div class="flex justify-between mb-2"><span>السعر:</span><span class="font-bold text-tiffany-400">$'+pkg.price+'</span></div>'
++'<div class="flex justify-between text-sm text-ink-400"><span>سعر الرد:</span><span>$'+(pkg.price/pkg.credits).toFixed(3)+'</span></div></div>'
++'<div class="text-xs text-ink-400 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">⚠️ بوابة الدفع الحقيقية (Stripe/PayPal) ستكون متاحة في تحديث قادم. حاليًا يُضاف الرصيد مباشرة للاختبار.</div>'
++'<div class="flex gap-2"><button data-action="modal-close" class="btn-ghost flex-1">إلغاء</button><button data-action="confirm-purchase" data-id="'+pkg.id+'" class="btn-primary flex-1">تأكيد الشراء</button></div></div>');}
+else if(a==='confirm-purchase'){
+var pkg2=PKGS.find(function(p){return p.id===id});if(!pkg2)return;
+var s=ws();
+if(isRemote()&&s&&s.__wid){
+var doneP=busy(t,'جارٍ إضافة الرصيد...');
+sbClient().rpc('purchase_credits',{ws_id:s.__wid,pkg_id:pkg2.id,payment_metadata:{test:true}}).then(function(r){
+if(doneP)doneP();
+if(r.data&&r.data.ok){s.credits_balance=r.data.new_balance;
+s.credit_history=s.credit_history||[];
+s.credit_history.unshift({type:'purchase',amount:pkg2.credits,description:'شراء '+pkg2.name,price:pkg2.price,created_at:new Date().toISOString()});
+save();closeModal();toast('تمت إضافة '+pkg2.credits.toLocaleString()+' رد إلى رصيدك ✔','ok');route();}
+else{toast('فشلت عملية الشراء على الخادم','err');}})
+.catch(function(err){if(doneP)doneP();toast('فشلت عملية الشراء: '+err.message,'err');});
+}else{
+s.credits_balance=(s.credits_balance||0)+pkg2.credits;
+s.credit_history=s.credit_history||[];
+s.credit_history.unshift({type:'purchase',amount:pkg2.credits,description:'شراء '+pkg2.name,price:pkg2.price,created_at:new Date().toISOString()});
+save();closeModal();toast('تمت إضافة '+pkg2.credits.toLocaleString()+' رد إلى رصيدك ✔','ok');route();}}
 else if(a==='ob-next'){var st=ws().settings;var curStep=st.onboardingStep||st.obStep||1;
 if(curStep===1&&!String(st.name||'').trim()){toast('اكتب اسم النشاط أولًا','err');return}
 if(curStep===2&&!(st.goals&&st.goals.length)){toast('اختر هدفًا واحدًا على الأقل','err');return}
@@ -1239,7 +1290,7 @@ st.onboardingStep=curStep+1;st.obStep=curStep+1;save();route()}
 else if(a==='ob-back'){var st2=ws().settings;var cs=st2.onboardingStep||st2.obStep||1;if(cs>1){st2.onboardingStep=cs-1;st2.obStep=cs-1;save();route()}}
 else if(a==='ob-goal'){var st3=ws().settings;var g=t.dataset.id;st3.goals=st3.goals||[];var gi=st3.goals.indexOf(g);if(gi>-1)st3.goals.splice(gi,1);else st3.goals.push(g);save();route()}
 else if(a==='ob-skip'){var st4=ws().settings;st4.onboarded=true;save();toast('تم تخطي التهيئة','ok');go('#/app')}
-else if(a==='ob-finish'){var st5=ws().settings;st5.onboarded=true;save();toast('🎉 تم إنهاء الإعداد — أهلًا بك في لوحة إدارة ســوشـــيــــال','ok');go('#/app')}
+else if(a==='ob-finish'){var st5=ws().settings;st5.onboarded=true;save();toast('🎉 تم إنهاء الإعداد — حصلت على 20 ردًا مجانيًا — أهلًا بك في لوحة إدارة ســوشـــيــــال','ok');go('#/app')}
 else if(a==='ob-goto'){var st6=ws().settings;var ns=parseInt(t.dataset.id||'1',10);st6.onboardingStep=ns;st6.obStep=ns;save();route()}
 else if(a==='ob-build'){obRunBuild()}
 else if(a==='ob-test-page'){var st7=ws().settings;go('#/test?wid='+(st7.obWidgetId||st7.onboardingWidgetId||''))}
@@ -1262,7 +1313,7 @@ else if(a==='reset-ws'){if(confirm('سيتم حذف كل البيانات وإع
 else if(a==='del-account'){
 if(isRemote()){toast('حذف الحساب يتم من إعدادات المصادقة في Supabase','err')}
 else if(confirm('حذف الحساب نهائيًا من هذا الجهاز؟')){db.users=db.users.filter(function(u){return u.id!==db.session});db.session=null;db.ws=null;persist();go('#/')}}
-else if(a==='choose-plan'){ws().plan=id;ws().invoices.unshift({id:uid('inv_'),plan:PLANS[id].name,amount:PLANS[id].price,date:now(),status:'مدفوعة'});save();toast('تم تغيير خطتك إلى '+PLANS[id].name+' 🎉 (الدفع الحقيقي في المرحلة التالية)','ok');route()}
+else if(a==='choose-plan'){ws().plan=id;ws().invoices.unshift({id:uid('inv_'),plan:PLANS[id].name,amount:PLANS[id].price,date:now(),status:'مدفوعة'});save();toast('تم تغيير خطتك إلى '+PLANS[id].name+' 🎉','ok');route()}
 else if(a==='inv')toast('تم تجهيز الفاتورة (نسخة عرض)','ok');
 else if(a==='sb-disconnect'){cfg=null;sb=null;remoteBroken=false;try{localStorage.removeItem('aown_cfg')}catch(e2){}toast('تم فصل الاتصال — العودة للوضع المحلي','ok');route()}
 else if(a==='eng-tab'){engTab=id;route()}
