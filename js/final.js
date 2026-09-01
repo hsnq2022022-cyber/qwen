@@ -71,3 +71,35 @@ try{if(isRemote()&&db.ws.__wid)sbClient().from('workspaces').update({onboarded:t
 return _go.apply(this,arguments);};
 
 })();
+
+/* ═══ زحف عبر الخادم فقط — ينهي أخطاء CORS و allorigins في Console ═══ */
+(function(){
+window.processUrl=function(url,doc){
+  doc.status='processing';doc.error='';doc.content='جارٍ الزحف عبر الخادم...';save();refreshKbUI();
+  var useServer=isRemote()&&cfg&&apiBase()&&db.ws&&db.ws.__wid;
+  if(!useServer){
+    /* وضع محلي: المتصفح يحظر CORS ولا وسيط موثوق — لا محاولة جلب عبثية */
+    doc.status='error';doc.error='الزحف يتطلب الاتصال بالخادم (سياسة CORS للمتصفح)';doc.content='';
+    save();refreshKbUI();urlFallbackModal(doc.id);
+    return Promise.resolve();
+  }
+  return fetch(apiBase()+'/kb-crawl',{method:'POST',headers:{'Content-Type':'application/json','api-key':cfg.key},
+    body:JSON.stringify({url:url,doc_id:doc.id,workspace_id:db.ws.__wid,agent_id:doc.agentId||null})})
+  .then(function(r){return r.json().catch(function(){return null;});})
+  .then(function(j){
+    if(j&&j.ok){
+      doc.status='ready';doc.chunkCount=j.chunks||0;doc.pages=j.pages||1;doc.lastSync=now();
+      doc.content='تم الزحف عبر الخادم — '+(j.pages||1)+' صفحة، '+(j.chunks||0)+' مقطعًا.';
+      save();refreshKbUI();toast('تم زحف الموقع ومعالجته ✔','ok');
+    }else{
+      /* الخادم أجاب (متجر JS-only مثلًا) → البديل اليدوي مباشرة، بدون أي fetch متصفح */
+      doc.status='error';doc.error=(j&&j.message)||'فشل الزحف عبر الخادم';doc.content='';
+      save();refreshKbUI();urlFallbackModal(doc.id);
+    }
+  })
+  .catch(function(err){
+    doc.status='error';doc.error=arErr(err&&err.message);doc.content='';
+    save();refreshKbUI();urlFallbackModal(doc.id);
+  });
+};
+})();
