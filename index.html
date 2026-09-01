@@ -557,7 +557,51 @@ var _save=window.save;
 window.save=function(){fixWs();return _save.apply(this,arguments);};
 
 })();
-</script>  
+</script>
+     <!-- ═══ الإصلاح الشامل النهائي: النوافذ + رفع الملفات + إضافة مصدر ═══ -->
+<script>
+(function(){
+
+/* [1] نافذة منبثقة صحيحة: النقرات الداخلية تعمل (رفع ملف/سحب/إفلات) ولا تُغلق النافذة عبثًا */
+window.modal=function(html){
+  var rootEl=document.getElementById('modal-root');
+  rootEl.innerHTML=
+  '<div class="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" data-action="modal-close">'+
+  '<div class="modal-inner glass rounded-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto p-6 fadeUp shadow-soft">'+html+'</div></div>';
+  var inner=rootEl.querySelector('.modal-inner');
+  if(inner){
+    inner.addEventListener('click',function(e){
+      var act=e.target.closest('[data-action]');
+      if(act&&inner.contains(act))return;  /* أزرار الإجراءات تمر للمعالج العام */
+      e.stopPropagation();                 /* باقي النقرات الداخلية: تعمل محليًا ولا تُغلق النافذة */
+    });
+  }
+};
+
+/* [2] agentOptions محصّنة: لا تنهار حتى لو غابت مصفوفة الوكلاء */
+window.agentOptions=function(sel){
+  var s=ws();var ag=(s&&s.agents)||[];
+  return '<option value="">مشترك — كل الوكلاء (يُنسخ لكل وكيل)</option>'+ag.map(function(a){
+    return '<option value="'+a.id+'"'+(sel===a.id?' selected':'')+'>'+esc(a.name)+'</option>';
+  }).join('');
+};
+
+/* [3] ضمان وجود المصفوفات دائمًا قبل أي عرض */
+function fixWs(){
+  var s=ws();if(!s)return;
+  ['agents','widgets','kb','contacts','convos','invoices'].forEach(function(k){
+    if(!Array.isArray(s[k]))s[k]=[];
+  });
+  if(!s.settings)s.settings={};
+  if(!s.usage)s.usage={ai:0};
+}
+var _route=window.route;
+window.route=function(){fixWs();return _route.apply(this,arguments);};
+var _save=window.save;
+window.save=function(){fixWs();return _save.apply(this,arguments);};
+
+})();
+</script>
 </body>
 </html>
 
