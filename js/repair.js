@@ -105,6 +105,20 @@ window.kbTypeModalOpen=function(type){
       var ag=document.getElementById('kb-ag2').value;
       var d={id:uid('kb_'),name:url,type:'url',agentId:ag,content:'جارٍ الزحف...',status:'processing',chunks:[],chunkCount:0,createdAt:now(),error:''};
       ws().kb.unshift(d);save();refreshKbUI();closeModal();processUrl(url,d);
+       /* [5] تشخيص مرئي: يعرض الخطأ الحقيقي بدل الرسالة العامة */
+var _lrD=window.loadRemote;
+window.loadRemote=async function(){
+  var ok=await _lrD.apply(this,arguments);
+  if(!ok&&remoteUser){
+    try{
+      var c=sbClient();
+      var q=await c.from('workspaces').select('id').eq('owner_id',remoteUser.id).limit(1);
+      if(q.error)toast('التشخيص: '+q.error.message,'err');
+      else toast('التشخيص: القراءة من قاعدة البيانات سليمة — المشكلة في الشبكة أو الجلسة','err');
+    }catch(e){toast('التشخيص: تعذر الفحص — '+String(e&&e.message),'err');}
+  }
+  return ok;
+};
     });
   }
   else toast('نوع مصدر غير معروف','err');
